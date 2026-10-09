@@ -113,7 +113,8 @@ class EmotionTestProcessor(VideoProcessorBase):
         return av.VideoFrame.from_ndarray(image, format="bgr24")
 
 
-webrtc_streamer(
+
+ctx = webrtc_streamer(
     key="emotionvision-test",
     video_processor_factory=EmotionTestProcessor,
     media_stream_constraints={
@@ -128,12 +129,3 @@ webrtc_streamer(
     async_processing=True
 )
 
-# Display the latest probability scores.
-if ctx.video_processor:
-    latest = getattr(ctx.video_processor, "latest_probabilities", None)
-
-    if latest:
-        with probability_area.container():
-            for name, score in latest.items():
-                st.write(f"**{name}: {score:.1f}%**")
-                st.progress(min(max(int(round(score)), 0), 100))
