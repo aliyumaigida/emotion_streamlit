@@ -113,12 +113,17 @@ class EmotionTestProcessor(VideoProcessorBase):
         return av.VideoFrame.from_ndarray(image, format="bgr24")
 
 
-ctx = webrtc_streamer(
+webrtc_streamer(
     key="emotionvision-test",
     video_processor_factory=EmotionTestProcessor,
     media_stream_constraints={
-        "video": {"width": {"ideal": 320}, "height": {"ideal": 240}},
+        "video": True,
         "audio": False
+    },
+    rtc_configuration={
+        "iceServers": [
+            {"urls": ["stun:stun.l.google.com:19302"]}
+        ]
     },
     async_processing=True
 )
