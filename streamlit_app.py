@@ -1,4 +1,3 @@
-
 import os
 
 import streamlit as st
@@ -10,9 +9,10 @@ import av
 from PIL import Image
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 from detector.face_detector import detect_face
+from detector.face_landmarks import detect_landmarks
 
 st.set_page_config(page_title="EmotionVision", page_icon="😊")
-st.title("EmotionVision — Deployment Test")
+st.title("EmotionVision — Real-Time Emotion Recognition")
 
 CLASS_NAMES = ["Angry", "Fear", "Happy", "Sad", "Surprise"]
 
@@ -28,26 +28,22 @@ def load_model():
     return tf.keras.models.load_model(MODEL_PATH)
 
 
-try:
-    model = load_model()
-    st.success("Emotion model loaded successfully.")
-except Exception as e:
-    st.error("Model loading failed.")
-    st.exception(e)
-    st.stop()
+model = load_model()
+st.success("Emotion model loaded successfully.")
+
+# These are shared display areas outside the webcam.
+st.subheader("Emotion probabilities")
+probability_area = st.empty()
 
 
 def predict_emotion(face):
     face = face.convert("RGB").resize((224, 224))
     image_array = np.asarray(face, dtype=np.float32)[None, ...]
 
-    # Run one inference directly instead of using model.predict()
     predictions = model(image_array, training=False).numpy()[0]
-
     index = int(np.argmax(predictions))
-    confidence = float(predictions[index]) * 100
 
-    return CLASS_NAMES[index], confidence
+    return CLASS_NAMES[index], float(predictions[index]) * 100, predictions
 
 
 class EmotionTestProcessor(VideoProcessorBase):
@@ -63,16 +59,11 @@ class EmotionTestProcessor(VideoProcessorBase):
             if face is not None and bbox is not None:
                 x, y, w, h = map(int, bbox)
 
-                emotion, confidence = predict_emotion(face)
+                emotion, confidence, probabilities = predict_emotion(face)
 
                 cv2.rectangle(
-                    image,
-                    (x, y),
-                    (x + w, y + h),
-                    (0, 255, 0),
-                    2
+                    image, (x, y), (x + w, y + h), (0, 255, 0), 2
                 )
-
                 cv2.putText(
                     image,
                     f"{emotion}: {confidence:.1f}%",
@@ -82,33 +73,47 @@ class EmotionTestProcessor(VideoProcessorBase):
                     (0, 255, 0),
                     2
                 )
+
+                # Draw facial landmarks.
+                # This assumes detect_landmarks returns normalized
+                # (x, y) coordinates between 0 and 1.
+                try:
+                    landmarks = detect_landmarks(pil_image)
+
+                    if landmarks is not None:
+                        for point in landmarks:
+                            if hasattr(point, "x") and hasattr(point, "y"):
+                                px = int(point.x * image.shape[1])
+                                py = int(point.y * image.shape[0])
+                            else:
+                                px = int(point[0] * image.shape[1])
+                                py = int(point[1] * image.shape[0])
+
+                            if 0 <= px < image.shape[1] and 0 <= py < image.shape[0]:
+                                cv2.circle(image, (px, py), 1, (0, 255, 255), -1)
+
+                except Exception as landmark_error:
+                    print("Landmark error:", repr(landmark_error))
+
+                # Store probabilities for the Streamlit interface.
+                self.latest_probabilities = {
+                    name: float(value) * 100
+                    for name, value in zip(CLASS_NAMES, probabilities)
+                }
+
             else:
                 cv2.putText(
-                    image,
-                    "No face detected",
-                    (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.8,
-                    (0, 0, 255),
-                    2
+                    image, "No face detected", (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2
                 )
 
         except Exception as e:
             print(f"Prediction error: {type(e).__name__}: {e}")
-            cv2.putText(
-                image,
-                "Prediction failed - check logs",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                (0, 0, 255),
-                2
-            )
 
         return av.VideoFrame.from_ndarray(image, format="bgr24")
 
 
-webrtc_streamer(
+ctx = webrtc_streamer(
     key="emotionvision-test",
     video_processor_factory=EmotionTestProcessor,
     media_stream_constraints={
@@ -117,3 +122,13 @@ webrtc_streamer(
     },
     async_processing=True
 )
+
+# Display the latest probability scores.
+if ctx.video_processor:
+    latest = getattr(ctx.video_processor, "latest_probabilities", None)
+
+    if latest:
+        with probability_area.container():
+            for name, score in latest.items():
+                st.write(f"**{name}: {score:.1f}%**")
+                st.progress(min(max(int(round(score)), 0), 100))
