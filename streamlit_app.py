@@ -1,18 +1,48 @@
 
 import streamlit as st
+import tensorflow as tf
+import numpy as np
 import cv2
 import av
+import os
 from PIL import Image
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 from detector.face_detector import detect_face
 from detector.face_landmarks import detect_landmarks
 
-st.set_page_config(page_title="EmotionVision Test", page_icon="😊")
-st.title("EmotionVision - Detector and Webcam Test")
+st.set_page_config(page_title="EmotionVision", page_icon="😊")
+st.title("EmotionVision - Emotion Prediction Test")
 
-st.success("OpenCV, AV, WebRTC and detector imports loaded.")
+CLASS_NAMES = ["Angry", "Fear", "Happy", "Sad", "Surprise"]
 
-class DetectorTestProcessor(VideoProcessorBase):
+MODEL_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "ai_model",
+    "emotion_model.keras"
+)
+
+@st.cache_resource
+def load_model():
+    return tf.keras.models.load_model(MODEL_PATH)
+
+try:
+    model = load_model()
+    st.success("Emotion model loaded successfully.")
+except Exception as e:
+    st.error("Could not load the emotion model.")
+    st.exception(e)
+    st.stop()
+
+def predict_emotion(image):
+    image = image.convert("RGB").resize((224, 224))
+    arr = np.asarray(image, dtype=np.float32)[None, ...]
+
+    predictions = model.predict(arr, verbose=0)[0]
+    index = int(np.argmax(predictions))
+
+    return CLASS_NAMES[index], float(predictions[index]) * 100
+
+class EmotionTestProcessor(VideoProcessorBase):
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
 
@@ -24,7 +54,20 @@ class DetectorTestProcessor(VideoProcessorBase):
 
             if face is not None and bbox is not None:
                 x, y, w, h = map(int, bbox)
-                cv2.rectangle(img, (x, y), (x+w, y+h), (0, 255, 0), 2)
+
+                cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+                emotion, confidence = predict_emotion(face)
+
+                cv2.putText(
+                    img,
+                    f"{emotion}: {confidence:.1f}%",
+                    (x, max(y - 10, 25)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 255, 0),
+                    2
+                )
 
                 landmarks = detect_landmarks(pil_image)
                 if landmarks:
@@ -32,6 +75,7 @@ class DetectorTestProcessor(VideoProcessorBase):
                         px = int(point["x"] * img.shape[1])
                         py = int(point["y"] * img.shape[0])
                         cv2.circle(img, (px, py), 1, (0, 255, 255), -1)
+
             else:
                 cv2.putText(
                     img, "No face detected", (20, 40),
@@ -39,17 +83,17 @@ class DetectorTestProcessor(VideoProcessorBase):
                 )
 
         except Exception as e:
-            print(f"Detector error: {type(e).__name__}: {e}")
+            print(f"Emotion prediction error: {type(e).__name__}: {e}")
             cv2.putText(
-                img, "Detector error - check logs", (10, 30),
+                img, "Prediction error - check logs", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2
             )
 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 webrtc_streamer(
-    key="detector-only-test",
-    video_processor_factory=DetectorTestProcessor,
+    key="emotionvision-prediction-test",
+    video_processor_factory=EmotionTestProcessor,
     media_stream_constraints={"video": True, "audio": False},
     async_processing=True
 )
