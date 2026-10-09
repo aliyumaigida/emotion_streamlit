@@ -1,17 +1,18 @@
 
+import os
+
 import streamlit as st
 import tensorflow as tf
 import numpy as np
 import cv2
 import av
-import os
+
 from PIL import Image
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 from detector.face_detector import detect_face
-from detector.face_landmarks import detect_landmarks
 
 st.set_page_config(page_title="EmotionVision", page_icon="😊")
-st.title("EmotionVision - Emotion Prediction Test")
+st.title("EmotionVision — Deployment Test")
 
 CLASS_NAMES = ["Angry", "Fear", "Happy", "Sad", "Surprise"]
 
@@ -21,33 +22,40 @@ MODEL_PATH = os.path.join(
     "emotion_model.keras"
 )
 
+
 @st.cache_resource
 def load_model():
     return tf.keras.models.load_model(MODEL_PATH)
+
 
 try:
     model = load_model()
     st.success("Emotion model loaded successfully.")
 except Exception as e:
-    st.error("Could not load the emotion model.")
+    st.error("Model loading failed.")
     st.exception(e)
     st.stop()
 
-def predict_emotion(image):
-    image = image.convert("RGB").resize((224, 224))
-    arr = np.asarray(image, dtype=np.float32)[None, ...]
 
-    predictions = model.predict(arr, verbose=0)[0]
+def predict_emotion(face):
+    face = face.convert("RGB").resize((224, 224))
+    image_array = np.asarray(face, dtype=np.float32)[None, ...]
+
+    # Run one inference directly instead of using model.predict()
+    predictions = model(image_array, training=False).numpy()[0]
+
     index = int(np.argmax(predictions))
+    confidence = float(predictions[index]) * 100
 
-    return CLASS_NAMES[index], float(predictions[index]) * 100
+    return CLASS_NAMES[index], confidence
+
 
 class EmotionTestProcessor(VideoProcessorBase):
     def recv(self, frame):
-        img = frame.to_ndarray(format="bgr24")
+        image = frame.to_ndarray(format="bgr24")
 
         try:
-            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             pil_image = Image.fromarray(rgb)
 
             face, bbox = detect_face(pil_image)
@@ -55,12 +63,18 @@ class EmotionTestProcessor(VideoProcessorBase):
             if face is not None and bbox is not None:
                 x, y, w, h = map(int, bbox)
 
-                cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
                 emotion, confidence = predict_emotion(face)
 
+                cv2.rectangle(
+                    image,
+                    (x, y),
+                    (x + w, y + h),
+                    (0, 255, 0),
+                    2
+                )
+
                 cv2.putText(
-                    img,
+                    image,
                     f"{emotion}: {confidence:.1f}%",
                     (x, max(y - 10, 25)),
                     cv2.FONT_HERSHEY_SIMPLEX,
@@ -68,32 +82,38 @@ class EmotionTestProcessor(VideoProcessorBase):
                     (0, 255, 0),
                     2
                 )
-
-                landmarks = detect_landmarks(pil_image)
-                if landmarks:
-                    for point in landmarks:
-                        px = int(point["x"] * img.shape[1])
-                        py = int(point["y"] * img.shape[0])
-                        cv2.circle(img, (px, py), 1, (0, 255, 255), -1)
-
             else:
                 cv2.putText(
-                    img, "No face detected", (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2
+                    image,
+                    "No face detected",
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 0, 255),
+                    2
                 )
 
         except Exception as e:
-            print(f"Emotion prediction error: {type(e).__name__}: {e}")
+            print(f"Prediction error: {type(e).__name__}: {e}")
             cv2.putText(
-                img, "Prediction error - check logs", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2
+                image,
+                "Prediction failed - check logs",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (0, 0, 255),
+                2
             )
 
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+        return av.VideoFrame.from_ndarray(image, format="bgr24")
+
 
 webrtc_streamer(
-    key="emotionvision-prediction-test",
+    key="emotionvision-test",
     video_processor_factory=EmotionTestProcessor,
-    media_stream_constraints={"video": True, "audio": False},
+    media_stream_constraints={
+        "video": {"width": {"ideal": 320}, "height": {"ideal": 240}},
+        "audio": False
+    },
     async_processing=True
 )
