@@ -1,10 +1,9 @@
-
-streamlit==1.45.1
+streamlit==1.51.0
 streamlit-webrtc==0.78.1
 tensorflow==2.18.0
-mediapipe==0.10.21
+mediapipe==1.0.1
 opencv-contrib-python==4.11.0.86
 av==17.1.0
 Pillow==11.3.0
-numpy==1.26.4
-protobuf==4.25.8
+numpy==2.0.2
+protobuf==5.29.5
