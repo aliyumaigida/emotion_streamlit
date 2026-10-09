@@ -1,0 +1,13 @@
+
+venv_emotion/
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.streamlit/secrets.toml
+.env
+.DS_Store
+
+# Temporary uploads and test outputs
+uploads/
+detected_face.jpg
